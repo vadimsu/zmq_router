@@ -522,12 +522,15 @@ void app_glue_set_user_data(void *socket,void *data)
 	struct socket *sock = (struct socket *)socket;
 
 	if(!sock) {
-		printf("PANIC: socket NULL\n");while(1);
+		printf("PANIC: socket NULL\n");
+                while(1);
 	}
 	if(sock->sk)
 		sock->sk->user_data = data;
-	else
-		printf("PANIC: socket->sk is NULL\n");while(1);
+	else {
+		printf("PANIC: socket->sk is NULL\n");
+                while(1);
+        }
 }
 /*
  * This function may be called to get attached to the socket user's data .
@@ -539,10 +542,12 @@ void *app_glue_get_user_data(void *socket)
 {
 	struct socket *sock = (struct socket *)socket;
 	if(!sock) {
-		printf("PANIC: socket NULL\n");while(1);
+		printf("PANIC: socket NULL\n");
+                while(1);
 	}
 	if(!sock->sk) {
-		printf("PANIC: socket->sk NULL\n");while(1);
+		printf("PANIC: socket->sk NULL\n");
+                while(1);
 	}
 	return sock->sk->user_data;
 }

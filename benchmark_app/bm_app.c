@@ -133,7 +133,7 @@ void user_data_available_cbk(struct socket *sock)
 	struct msghdr msg;
 	struct iovec vec;
 	struct rte_mbuf *mbuf;
-	int i,dummy = 1;
+	int i,dummy = 1,idx;
 	user_on_rx_opportunity_called++;
 	memset(&vec,0,sizeof(vec));
 	if(unlikely(sock == NULL)) {
@@ -142,7 +142,13 @@ void user_data_available_cbk(struct socket *sock)
 	while(unlikely((i = kernel_recvmsg(sock, &msg,&vec, 1 /*num*/, 1448 /*size*/, 0 /*flags*/)) > 0)) {
 		dummy = 0;
 		while(unlikely(mbuf = msg.msg_iov->head)) {
+                        char *p = mbuf->pkt.data;
 			msg.msg_iov->head = msg.msg_iov->head->pkt.next;
+                        for(idx = 0;idx < mbuf->pkt.data_len;idx++) { 
+                             if(!(idx%8))
+                                 printf("\n");
+                             printf(" %x",p[idx]);
+                        }
             user_rx_mbufs++;
 			rte_pktmbuf_free_seg(mbuf);
 		}

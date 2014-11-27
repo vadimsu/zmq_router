@@ -886,7 +886,7 @@ static ssize_t do_tcp_sendpages(struct sock *sk, struct page *page, int offset,
 	struct tcp_sock *tp = tcp_sk(sk);
 	int mss_now, size_goal;
 	int err;
-	ssize_t copied;
+	ssize_t copied = 0;
         struct rte_mbuf *mbuf;
 	struct page _page;
         struct sk_buff *skb;
