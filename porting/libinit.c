@@ -267,7 +267,7 @@ void show_mib_stats(void);
 static int print_stats(__attribute__((unused)) void *dummy)
 {
 	while(1) {
-#if 1
+#if 0
 		app_glue_print_stats();
 		show_mib_stats();
         dpdk_dev_print_stats();
@@ -280,6 +280,8 @@ static int print_stats(__attribute__((unused)) void *dummy)
 		printf("rx pool free count %d\n",rte_mempool_count(pool_direct[0]));
 		printf("stack pool free count %d\n",rte_mempool_count(mbufs_mempool));
 		print_skb_iov_stats();
+#else
+                print_user_stats();
 #endif
 		sleep(1);
 	}

@@ -31,16 +31,20 @@
 #include <porting/libinit.h>
 
 
-uint64_t user_on_tx_opportunity_cycles = 0;
+uint64_t user_on_state_machine_run = 0;
 uint64_t user_on_tx_opportunity_called = 0;
+uint64_t user_on_get_tx_buf_failed = 0;
+uint64_t user_queued_buf_is_too_big = 0;
 uint64_t user_on_tx_opportunity_getbuff_called = 0;
-uint64_t user_on_tx_opportunity_api_not_called = 0;
+uint64_t user_on_handshake = 0;
+uint64_t user_on_length = 0;
+uint64_t user_on_get_length = 0;
+uint64_t user_on_payload = 0;
 uint64_t user_on_tx_opportunity_api_failed = 0;
 uint64_t user_on_tx_opportunity_api_mbufs_sent = 0;
-uint64_t user_on_tx_opportunity_cannot_get_buff = 0;
+uint64_t user_on_length_mismatch = 0;
 uint64_t user_on_rx_opportunity_called = 0;
 uint64_t user_on_rx_opportunity_called_wo_result = 0;
-uint64_t user_rx_mbufs = 0;
 
 enum
 {
@@ -95,6 +99,7 @@ static inline struct rte_mbuf *dequeue_mbuf_till_length(struct rte_mbuf_queue *q
         queue->head = NULL;
         queue->tail = NULL;
         *len -= original_pkt_len;
+        user_on_tx_opportunity_api_mbufs_sent++;
         return first;
     }
     while((curr)&&(*len > 0)) {
@@ -109,6 +114,7 @@ static inline struct rte_mbuf *dequeue_mbuf_till_length(struct rte_mbuf_queue *q
                 tail = tail->pkt.next;
                 first->pkt.pkt_len += curr->pkt.data_len;
             }
+            user_on_tx_opportunity_api_mbufs_sent++;
             original_pkt_len -= curr->pkt.data_len;
             *len -= curr->pkt.data_len;
             curr = curr->pkt.next;
@@ -179,7 +185,7 @@ static inline int queue_empty(struct rte_mbuf_queue *queue)
 
 static inline int get_queue_length(struct rte_mbuf_queue *queue)
 {
-    return queue->head->pkt.pkt_len;
+    return (queue->head) ? queue->head->pkt.pkt_len : 0;
 }
 
 static inline void print_mbuf(struct rte_mbuf *mbuf)
@@ -231,12 +237,17 @@ struct rte_mbuf *user_get_buffer(struct sock *sk,int *copy)
         if(first != NULL) { 
             return first;
         }
+#if 0
         //TRACE_ZMQ_ROUTER("no mbufs or mbufs are too big");
         first = dequeue_mbuf_till_length(&peer->messages,copy);
         if(first) {
             user_on_tx_opportunity_api_mbufs_sent++;
         }
 	return first;
+#else
+        user_on_get_tx_buf_failed++;
+        return NULL;
+#endif
 }
 #endif
 int user_on_transmission_opportunity(struct socket *sock)
@@ -247,6 +258,9 @@ int user_on_transmission_opportunity(struct socket *sock)
 	uint64_t ts = rte_rdtsc();
         zmq_peer_t *peer = app_glue_get_user_data(sock);
         if(!peer) {
+            return 0;
+        }
+        if(get_queue_length(&peer->response) == 0) {
             return 0;
         }
 	user_on_tx_opportunity_called++;
@@ -260,8 +274,10 @@ int user_on_transmission_opportunity(struct socket *sock)
                 }
                 else
                     sent += i;
+                if(get_queue_length(&peer->response) == 0) {
+                    break;
+                }
 	}
-	user_on_tx_opportunity_cycles += rte_rdtsc() - ts;
 	return sent;
 }
 
@@ -271,6 +287,7 @@ int get_zmq_message_length(zmq_peer_t *peer)
     unsigned char *dst = (unsigned char *)&peer->bytes_expected;
     struct rte_mbuf *mbuf = peer->messages.head;
     unsigned char *src = (unsigned char *)mbuf->pkt.data;
+    user_on_get_length++; 
     if(mbuf->pkt.pkt_len <= offset) {
        return -1;
     }
@@ -325,13 +342,12 @@ int get_zmq_message_length(zmq_peer_t *peer)
         mbuf = mbuf->pkt.next;
         src = mbuf->pkt.data;
     }
-    printf("%s %d %d\n",__func__,__LINE__,peer->bytes_expected);
     return (bytes_copied == sizeof(unsigned long));
 }
 int parse_zmq_length(zmq_peer_t *peer,struct rte_mbuf *mbuf)
 {
     unsigned char *p;
-
+    user_on_length++;
     enqueue_mbuf(&peer->messages,mbuf);
     
     if(peer->messages.head->pkt.pkt_len < 3) {
@@ -356,6 +372,7 @@ int parse_zmq_payload(zmq_peer_t *peer,struct rte_mbuf *mbuf)
 {
     zmq_peer_t *other_peer;
     int rc;
+    user_on_payload++;
     if(queue_empty(&peer->messages)) {
         TRACE_ZMQ_ROUTER("");
         return 1;
@@ -364,10 +381,12 @@ int parse_zmq_payload(zmq_peer_t *peer,struct rte_mbuf *mbuf)
     
     if(peer->messages.head->pkt.pkt_len > peer->bytes_expected) {
         TRACE_ZMQ_ROUTER("");
+        user_on_length_mismatch++;
         return 1;
     }
     if(get_queue_length(&peer->messages) != peer->bytes_expected) {
         TRACE_ZMQ_ROUTER("");
+        user_on_length_mismatch++;
         return 1;
     }
     if(!peer->peer_sock) {
@@ -411,6 +430,7 @@ int parse_zmq_payload(zmq_peer_t *peer,struct rte_mbuf *mbuf)
     TRACE_ZMQ_ROUTER((char *)mbuf->pkt.data);
 #else
     substitute_data(&peer->messages,"RESPONSE",4,strlen("RESPONSE"));
+    move_queue(&peer->messages,&peer->response);
 #endif
     peer->state = LENGTH_STATE;
     user_on_transmission_opportunity(peer->peer_sock);
@@ -445,6 +465,7 @@ void run_client_sock_state_machine(zmq_peer_t *peer,struct rte_mbuf *mbuf)
 }
 void run_state_machine(struct socket *sock,zmq_peer_t *peer,struct rte_mbuf *mbuf)
 {
+    user_on_state_machine_run++;
     switch(peer->type){
         case CLIENT_PIPE_TYPE:
             run_client_sock_state_machine(peer,mbuf);
@@ -473,9 +494,9 @@ void user_data_available_cbk(struct socket *sock)
 		dummy = 0;
                 while((mbuf = msg.msg_iov->head) != NULL) {
                     msg.msg_iov->head = msg.msg_iov->head->pkt.next;
-                    run_state_machine(sock,peer,mbuf);
-//                    enqueue_mbuf(&peer->messages,mbuf);
-//                    user_on_transmission_opportunity(sock);
+//                    run_state_machine(sock,peer,mbuf);
+                    enqueue_mbuf(&peer->response,mbuf);
+                    user_on_transmission_opportunity(sock);
                 }
 		memset(&vec,0,sizeof(vec));
 	}
@@ -521,7 +542,7 @@ void app_main_loop()
 	                             /*drv_poll_interval/(10*MAX_PKT_BURST)*/0,
 	                             /*drv_poll_interval/(60*MAX_PKT_BURST)*/0);
 
-        zmq_peers = kmem_cache_create("zmq_peers", sizeof(zmq_peer_t),10,0,NULL);
+        zmq_peers = kmem_cache_create("zmq_peers", sizeof(zmq_peer_t),100,0,NULL);
 
         memset(&outgoing_peers[0],0,sizeof(outgoing_peers[0]));
         outgoing_peers[0].type = CLIENT_PIPE_TYPE;
@@ -534,12 +555,15 @@ void app_main_loop()
 void print_user_stats()
 {
 	printf("user_on_tx_opportunity_called %"PRIu64"\n",user_on_tx_opportunity_called);
-	printf("user_on_tx_opportunity_api_not_called %"PRIu64"\n",user_on_tx_opportunity_api_not_called);
-	printf("user_on_tx_opportunity_cannot_get_buff %"PRIu64"\n",user_on_tx_opportunity_cannot_get_buff);
+	printf("user_on_handshake %"PRIu64" user_on_length %"PRIu64" user_on_get_length %"PRIu64" user_on_payload %"PRIu64" \n",
+                user_on_handshake,user_on_length,user_on_get_length,user_on_payload);
+	printf("user_on_length_mismatch %"PRIu64"\n",user_on_length_mismatch);
 	printf("user_on_tx_opportunity_getbuff_called %"PRIu64"\n",user_on_tx_opportunity_getbuff_called);
 	printf("user_on_tx_opportunity_api_failed %"PRIu64"\n",	user_on_tx_opportunity_api_failed);
 	printf("user_on_rx_opportunity_called %"PRIu64"\n",user_on_rx_opportunity_called);
 	printf("user_on_rx_opportunity_called_wo_result %"PRIu64"\n",user_on_rx_opportunity_called_wo_result);
-	printf("user_rx_mbufs %"PRIu64"\n",user_rx_mbufs,user_rx_mbufs);
         printf("user_on_tx_opportunity_api_mbufs_sent %"PRIu64"\n",user_on_tx_opportunity_api_mbufs_sent);
+        printf("user_on_state_machine_run %"PRIu64"\n",user_on_state_machine_run);
+        printf("user_on_get_tx_buf_failed %"PRIu64"\n",user_on_get_tx_buf_failed);
+        printf("user_queued_buf_is_too_big %"PRIu64"\n",user_queued_buf_is_too_big);
 }

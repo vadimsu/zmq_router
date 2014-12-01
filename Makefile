@@ -27,7 +27,7 @@ porting/libinit.c porting/show_mib_stats.c \
 drivers/net/dpdk/rx.c drivers/net/dpdk/tx.c \
 drivers/net/dpdk/dpdk_sw_loop.c drivers/net/dpdk/device.c 
 #CFLAGS += -g
-CFLAGS += -Ofast   
+CFLAGS += -Ofast -m64  
 CFLAGS += $(WERROR_FLAGS) 
 LINUX_HEADERS=$(SRC_ROOT)
 DPDK_HEADERS=$(SRC_ROOT)/dpdk-1.6.0r2/x86_64-default-linuxapp-gcc/include
