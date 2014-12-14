@@ -156,6 +156,17 @@ static inline void substitute_data(struct rte_mbuf_queue *queue,char *data,int o
     }
 }
 
+static inline void shrink_data(struct rte_mbuf_queue *queue)
+{
+    if(queue->tail) {
+        if(queue->tail->pkt.data_len < 10) {
+            printf("%s %d \n",__FILE__,__LINE__);
+        }
+        else
+            queue->tail->pkt.data_len -= 10;
+    }
+}
+
 static inline void enqueue_mbuf(struct rte_mbuf_queue *queue,struct rte_mbuf *mbuf)
 {
     if(!queue->head) {
@@ -237,7 +248,7 @@ struct rte_mbuf *user_get_buffer(struct sock *sk,int *copy)
         if(first != NULL) { 
             return first;
         }
-#if 0
+#if 1
         //TRACE_ZMQ_ROUTER("no mbufs or mbufs are too big");
         first = dequeue_mbuf_till_length(&peer->messages,copy);
         if(first) {
@@ -318,6 +329,7 @@ int get_zmq_message_length(zmq_peer_t *peer)
             }
             TRACE_ZMQ_ROUTER("expected bytes recalculated");
             peer->bytes_expected = *src;
+            *src = (*src) - 10;
             return 1; 
         }
         offset -= mbuf->pkt.data_len; 
@@ -372,6 +384,7 @@ int parse_zmq_payload(zmq_peer_t *peer,struct rte_mbuf *mbuf)
 {
     zmq_peer_t *other_peer;
     int rc;
+    TRACE_ZMQ_ROUTER("");
     user_on_payload++;
     if(queue_empty(&peer->messages)) {
         TRACE_ZMQ_ROUTER("");
@@ -429,8 +442,9 @@ int parse_zmq_payload(zmq_peer_t *peer,struct rte_mbuf *mbuf)
 
     TRACE_ZMQ_ROUTER((char *)mbuf->pkt.data);
 #else
-    substitute_data(&peer->messages,"RESPONSE",4,strlen("RESPONSE"));
+    //substitute_data(&peer->messages,"RESPONSE",4,strlen("RESPONSE")); 
     move_queue(&peer->messages,&peer->response);
+    shrink_data(&peer->response);
 #endif
     peer->state = LENGTH_STATE;
     user_on_transmission_opportunity(peer->peer_sock);
@@ -494,8 +508,8 @@ void user_data_available_cbk(struct socket *sock)
 		dummy = 0;
                 while((mbuf = msg.msg_iov->head) != NULL) {
                     msg.msg_iov->head = msg.msg_iov->head->pkt.next;
-//                    run_state_machine(sock,peer,mbuf);
-                    enqueue_mbuf(&peer->response,mbuf);
+                    run_state_machine(sock,peer,mbuf);
+//                    enqueue_mbuf(&peer->response,mbuf);
                     user_on_transmission_opportunity(sock);
                 }
 		memset(&vec,0,sizeof(vec));
@@ -554,6 +568,7 @@ void app_main_loop()
 /*this is called in non-data-path thread */
 void print_user_stats()
 {
+#if 0
 	printf("user_on_tx_opportunity_called %"PRIu64"\n",user_on_tx_opportunity_called);
 	printf("user_on_handshake %"PRIu64" user_on_length %"PRIu64" user_on_get_length %"PRIu64" user_on_payload %"PRIu64" \n",
                 user_on_handshake,user_on_length,user_on_get_length,user_on_payload);
@@ -566,4 +581,5 @@ void print_user_stats()
         printf("user_on_state_machine_run %"PRIu64"\n",user_on_state_machine_run);
         printf("user_on_get_tx_buf_failed %"PRIu64"\n",user_on_get_tx_buf_failed);
         printf("user_queued_buf_is_too_big %"PRIu64"\n",user_queued_buf_is_too_big);
+#endif
 }
