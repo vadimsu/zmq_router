@@ -82,6 +82,14 @@ static inline void move_queue(struct rte_mbuf_queue *srcqueue,struct rte_mbuf_qu
         dstqueue->tail->pkt.next = srcqueue->head;
         dstqueue->head->pkt.pkt_len += srcqueue->head->pkt.pkt_len;
     }
+    {
+        struct rte_mbuf *mbuf = dstqueue->head;
+        int mbuf_count = 0;
+        while(mbuf) {
+            mbuf_count++;
+            mbuf = mbuf->pkt.next;
+        }
+    }
     srcqueue->head = NULL;
     srcqueue->tail = NULL;
 }
@@ -248,17 +256,12 @@ struct rte_mbuf *user_get_buffer(struct sock *sk,int *copy)
         if(first != NULL) { 
             return first;
         }
-#if 1
         //TRACE_ZMQ_ROUTER("no mbufs or mbufs are too big");
         first = dequeue_mbuf_till_length(&peer->messages,copy);
         if(first) {
             user_on_tx_opportunity_api_mbufs_sent++;
         }
 	return first;
-#else
-        user_on_get_tx_buf_failed++;
-        return NULL;
-#endif
 }
 #endif
 int user_on_transmission_opportunity(struct socket *sock)
@@ -275,8 +278,8 @@ int user_on_transmission_opportunity(struct socket *sock)
             return 0;
         }
 	user_on_tx_opportunity_called++;
-
-	while(likely((to_send_this_time = app_glue_calc_size_of_data_to_send(sock)) > 0)) {
+        to_send_this_time = app_glue_calc_size_of_data_to_send(sock);
+	while(likely(to_send_this_time) > 0) {
 		sock->sk->sk_route_caps |= NETIF_F_SG | NETIF_F_ALL_CSUM;
 		i = kernel_sendpage(sock, &page, 0,/*offset*/to_send_this_time /* size*/, 0 /*flags*/);
 		if(i <= 0) {
@@ -292,7 +295,7 @@ int user_on_transmission_opportunity(struct socket *sock)
 	return sent;
 }
 
-int get_zmq_message_length(zmq_peer_t *peer)
+static inline int get_zmq_message_length(zmq_peer_t *peer)
 {
     unsigned long length,bytes_copied = 0,bytes_to_copy,target_size,offset = 2;
     unsigned char *dst = (unsigned char *)&peer->bytes_expected;
@@ -356,7 +359,7 @@ int get_zmq_message_length(zmq_peer_t *peer)
     }
     return (bytes_copied == sizeof(unsigned long));
 }
-int parse_zmq_length(zmq_peer_t *peer,struct rte_mbuf *mbuf)
+static inline int parse_zmq_length(zmq_peer_t *peer,struct rte_mbuf *mbuf)
 {
     unsigned char *p;
     user_on_length++;
@@ -380,7 +383,7 @@ int parse_zmq_length(zmq_peer_t *peer,struct rte_mbuf *mbuf)
     TRACE_ZMQ_ROUTER("");
     return 1;
 }
-int parse_zmq_payload(zmq_peer_t *peer,struct rte_mbuf *mbuf)
+static inline int parse_zmq_payload(zmq_peer_t *peer,struct rte_mbuf *mbuf)
 {
     zmq_peer_t *other_peer;
     int rc;
@@ -450,7 +453,7 @@ int parse_zmq_payload(zmq_peer_t *peer,struct rte_mbuf *mbuf)
     user_on_transmission_opportunity(peer->peer_sock);
     return 1;
 }
-void run_server_sock_state_machine(struct socket *sock,zmq_peer_t *peer,struct rte_mbuf *mbuf)
+static inline void run_server_sock_state_machine(struct socket *sock,zmq_peer_t *peer,struct rte_mbuf *mbuf)
 { 
     unsigned char *p = mbuf->pkt.data;
     switch(peer->state) {
@@ -460,6 +463,7 @@ void run_server_sock_state_machine(struct socket *sock,zmq_peer_t *peer,struct r
                 TRACE_ZMQ_ROUTER("handshake complete");
                 enqueue_mbuf(&peer->response,mbuf);
                 peer->state = LENGTH_STATE;
+                user_on_transmission_opportunity(sock);
             }
             else {
                 rte_pktmbuf_free_seg(mbuf);
@@ -473,11 +477,11 @@ void run_server_sock_state_machine(struct socket *sock,zmq_peer_t *peer,struct r
             break;    	
     }
 }
-void run_client_sock_state_machine(zmq_peer_t *peer,struct rte_mbuf *mbuf)
+static inline void run_client_sock_state_machine(zmq_peer_t *peer,struct rte_mbuf *mbuf)
 {
     TRACE_ZMQ_ROUTER("");
 }
-void run_state_machine(struct socket *sock,zmq_peer_t *peer,struct rte_mbuf *mbuf)
+static inline  void run_state_machine(struct socket *sock,zmq_peer_t *peer,struct rte_mbuf *mbuf)
 {
     user_on_state_machine_run++;
     switch(peer->type){
@@ -506,12 +510,7 @@ void user_data_available_cbk(struct socket *sock)
 	}
 	while(unlikely((i = kernel_recvmsg(sock, &msg,&vec, 1 /*num*/, 1448 /*size*/, 0 /*flags*/)) > 0)) {
 		dummy = 0;
-                while((mbuf = msg.msg_iov->head) != NULL) {
-                    msg.msg_iov->head = msg.msg_iov->head->pkt.next;
-                    run_state_machine(sock,peer,mbuf);
-//                    enqueue_mbuf(&peer->response,mbuf);
-                    user_on_transmission_opportunity(sock);
-                }
+                run_state_machine(sock,peer,msg.msg_iov->head); 
 		memset(&vec,0,sizeof(vec));
 	}
 	if(dummy) {
@@ -551,10 +550,10 @@ void app_main_loop()
 {
     uint8_t ports_to_poll[1] = { 0 };
 	int drv_poll_interval = get_max_drv_poll_interval_in_micros(0);
-	app_glue_init_poll_intervals(/*drv_poll_interval/(2*MAX_PKT_BURST)*/0,
+	app_glue_init_poll_intervals(drv_poll_interval/(2*MAX_PKT_BURST),
 	                             1000 /*timer_poll_interval*/,
-	                             /*drv_poll_interval/(10*MAX_PKT_BURST)*/0,
-	                             /*drv_poll_interval/(60*MAX_PKT_BURST)*/0);
+	                             drv_poll_interval/(10*MAX_PKT_BURST),
+	                             drv_poll_interval/(60*MAX_PKT_BURST));
 
         zmq_peers = kmem_cache_create("zmq_peers", sizeof(zmq_peer_t),100,0,NULL);
 

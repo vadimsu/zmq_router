@@ -407,14 +407,9 @@ static void process_tx_ready_sockets()
 	if(!TAILQ_EMPTY(&write_ready_socket_list_head)) {
 		sock = TAILQ_FIRST(&write_ready_socket_list_head);
 		TAILQ_REMOVE(&write_ready_socket_list_head,sock,write_queue_entry);
-		if(user_on_transmission_opportunity(sock) > 0) {
-		    sock->write_queue_present = 0;
-		    set_bit(SOCK_NOSPACE, &sock->flags);
-		}
-		else {
-			TAILQ_INSERT_TAIL(&write_ready_socket_list_head,sock,write_queue_entry);
-			clear_bit(SOCK_NOSPACE, &sock->flags);
-		}
+		user_on_transmission_opportunity(sock);
+		sock->write_queue_present = 0;
+		set_bit(SOCK_NOSPACE, &sock->flags);
 	}
 }
 /* These are in translation of micros to cycles */
